@@ -48,7 +48,6 @@ class SemIfClassifier(Runnable):
         prompt = f"Context: {state}\nInstructions: {instructions}\nChoice:"
         prompt_inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
 
-        option_probs = {}
         option_log_likelihoods = {}
 
         with torch.no_grad():
@@ -57,7 +56,6 @@ class SemIfClassifier(Runnable):
             next_token_logits = outputs.logits[0, -1, :]
 
             for option in options:
-                # Format option with leading space if needed
                 opt_str = f" {option.strip()}"
                 opt_token_ids = self.tokenizer.encode(opt_str, add_special_tokens=False)
 
@@ -65,7 +63,7 @@ class SemIfClassifier(Runnable):
                     token_id = opt_token_ids[0]
                     log_prob = F.log_softmax(next_token_logits, dim=-1)[token_id].item()
                 else:
-                    # Multi-token log-likelihood calculation
+                    # Multi-token log-likelihood calculation normalized by length
                     full_text = f"{prompt}{opt_str}"
                     full_inputs = self.tokenizer(full_text, return_tensors="pt").to(self.device)
                     full_outputs = self.model(**full_inputs)
@@ -74,12 +72,15 @@ class SemIfClassifier(Runnable):
                     prompt_len = prompt_inputs["input_ids"].shape[1]
                     target_token_ids = full_inputs["input_ids"][0, prompt_len:]
 
-                    log_prob = 0.0
+                    sum_log_prob = 0.0
                     for idx, target_id in enumerate(target_token_ids):
                         pos = prompt_len - 1 + idx
                         pos_logits = full_logits[pos]
                         pos_log_prob = F.log_softmax(pos_logits, dim=-1)[target_id].item()
-                        log_prob += pos_log_prob
+                        sum_log_prob += pos_log_prob
+
+                    # Average log likelihood per token to balance single-token and multi-token options
+                    log_prob = sum_log_prob / len(target_token_ids)
 
                 option_log_likelihoods[option] = log_prob
 
